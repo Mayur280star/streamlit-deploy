@@ -226,7 +226,7 @@ class AttentionLayer(tf.keras.layers.Layer):
 # ======================================================
 import os
 
-MODEL_PATH = "F:\\newworldbegins\\exonew\\Streamlit\\exoplanet_model.keras"
+MODEL_PATH = "exoplanet_model.keras"
 
 
 @st.cache_resource
