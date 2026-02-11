@@ -11,8 +11,167 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 import warnings
+import io
 
 warnings.filterwarnings("ignore")
+
+
+# ======================================================
+# ROBUST CSV READER FOR KEPLER DATA
+# ======================================================
+def read_kepler_csv(uploaded_file):
+    """
+    Robust CSV reader that handles:
+    - Comment lines starting with #
+    - Tab-separated values
+    - Extra blank lines
+    - Various whitespace issues
+    """
+    try:
+        # Read the file content
+        content = uploaded_file.read()
+
+        # Try to decode if bytes
+        if isinstance(content, bytes):
+            content = content.decode("utf-8")
+
+        # Reset file pointer for pandas
+        uploaded_file.seek(0)
+
+        # Parse the content line by line
+        lines = content.split("\n")
+
+        # Find the header line and data start
+        header_line = None
+        data_start = None
+
+        for i, line in enumerate(lines):
+            line = line.strip()
+
+            # Skip empty lines and comments
+            if not line or line.startswith("#"):
+                continue
+
+            # Check if this looks like a header
+            if "time" in line.lower() or "flux" in line.lower():
+                header_line = i
+                data_start = i + 1
+                break
+
+        if header_line is None:
+            # No header found, assume first non-comment line is data
+            st.warning("No header found. Assuming columns: time, flux, flux_err")
+            data_lines = [
+                line.strip()
+                for line in lines
+                if line.strip() and not line.strip().startswith("#")
+            ]
+
+            # Try to parse as TSV
+            data = []
+            for line in data_lines:
+                parts = line.split("\t")
+                # Remove empty strings
+                parts = [p.strip() for p in parts if p.strip()]
+                if len(parts) >= 2:  # At least time and flux
+                    data.append(parts[:3])  # time, flux, flux_err (if available)
+
+            if not data:
+                raise ValueError("No valid data found in file")
+
+            # Create DataFrame
+            if len(data[0]) >= 3:
+                df = pd.DataFrame(data, columns=["time", "flux", "flux_err"])
+            else:
+                df = pd.DataFrame(data, columns=["time", "flux"])
+
+        else:
+            # Header found, extract data
+            header = lines[header_line].strip()
+
+            # Parse header - could be tab or comma separated
+            if "\t" in header:
+                columns = [col.strip() for col in header.split("\t") if col.strip()]
+            else:
+                columns = [col.strip() for col in header.split(",") if col.strip()]
+
+            # Extract data lines
+            data_lines = []
+            for i in range(data_start, len(lines)):
+                line = lines[i].strip()
+                if not line or line.startswith("#"):
+                    continue
+                data_lines.append(line)
+
+            # Parse data
+            data = []
+            for line in data_lines:
+                # Try tab separator first
+                if "\t" in line:
+                    parts = line.split("\t")
+                else:
+                    parts = line.split(",")
+
+                # Remove empty strings and whitespace
+                parts = [p.strip() for p in parts if p.strip()]
+
+                if len(parts) >= 2:  # At least time and flux
+                    data.append(parts[: len(columns)])
+
+            if not data:
+                raise ValueError("No valid data found after header")
+
+            # Create DataFrame
+            df = pd.DataFrame(data, columns=columns[: len(data[0])])
+
+        # Convert to numeric
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        # Drop rows with NaN in critical columns
+        if "flux" in df.columns:
+            df = df.dropna(subset=["flux"])
+
+        # Ensure we have required columns
+        if "flux" not in df.columns:
+            raise ValueError("CSV must contain a 'flux' column")
+
+        # If no time column, create one
+        if "time" not in df.columns:
+            df["time"] = np.arange(len(df))
+
+        st.success(f"✅ Successfully loaded {len(df)} data points")
+
+        return df
+
+    except Exception as e:
+        st.error(f"Error reading file: {str(e)}")
+
+        # Try standard pandas as fallback
+        try:
+            uploaded_file.seek(0)
+            df = pd.read_csv(
+                uploaded_file,
+                sep=None,  # Auto-detect separator
+                engine="python",
+                comment="#",
+                skipinitialspace=True,
+                skip_blank_lines=True,
+            )
+
+            if "flux" not in df.columns:
+                raise ValueError("CSV must contain a 'flux' column")
+
+            st.success(
+                f"✅ Successfully loaded {len(df)} data points (fallback method)"
+            )
+            return df
+
+        except Exception as e2:
+            st.error(f"Fallback method also failed: {str(e2)}")
+            st.info("Please ensure your CSV has a 'flux' column and proper formatting.")
+            return None
+
 
 # ======================================================
 # CONFIG
@@ -113,9 +272,13 @@ def detect_transits_advanced(flux, threshold_sigma=3):
     normalized = normalize_flux(flux)
 
     # Smooth the curve
-    smoothed = savgol_filter(
-        normalized, window_length=min(51, len(normalized) // 10 * 2 + 1), polyorder=2
-    )
+    window_length = min(51, len(normalized) // 10 * 2 + 1)
+    if window_length < 5:
+        window_length = 5
+    if window_length % 2 == 0:
+        window_length += 1
+
+    smoothed = savgol_filter(normalized, window_length=window_length, polyorder=2)
 
     # Find dips (negative peaks)
     threshold = -threshold_sigma
@@ -130,7 +293,12 @@ def detect_transits_advanced(flux, threshold_sigma=3):
 def calculate_snr(flux):
     """Calculate Signal-to-Noise Ratio"""
     signal_power = np.mean(flux**2)
-    noise = flux - signal.medfilt(flux, kernel_size=min(51, len(flux) // 10 * 2 + 1))
+    kernel_size = min(51, len(flux) // 10 * 2 + 1)
+    if kernel_size < 3:
+        kernel_size = 3
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    noise = flux - signal.medfilt(flux, kernel_size=kernel_size)
     noise_power = np.var(noise)
     if noise_power == 0:
         return float("inf")
@@ -157,7 +325,10 @@ def fourier_analysis(flux):
     power = power[pos_mask]
 
     # Find dominant frequencies
-    peak_indices = find_peaks(power, height=np.percentile(power, 95))[0]
+    if len(power) > 0:
+        peak_indices = find_peaks(power, height=np.percentile(power, 95))[0]
+    else:
+        peak_indices = np.array([])
 
     return frequencies, power, peak_indices
 
@@ -213,14 +384,17 @@ def estimate_period(time, flux):
     correlation = correlation[len(correlation) // 2 :]
 
     # Find peaks in autocorrelation
-    peaks, _ = find_peaks(correlation, height=0.1 * np.max(correlation), distance=50)
+    if len(correlation) > 50:
+        peaks, _ = find_peaks(
+            correlation, height=0.1 * np.max(correlation), distance=50
+        )
 
-    if len(peaks) > 0:
-        # Period is the time lag of first significant peak
-        period_samples = peaks[0]
-        if len(time) > period_samples:
-            period = time[period_samples] - time[0]
-            return period
+        if len(peaks) > 0:
+            # Period is the time lag of first significant peak
+            period_samples = peaks[0]
+            if len(time) > period_samples:
+                period = time[period_samples] - time[0]
+                return abs(period)
 
     return None
 
@@ -248,26 +422,33 @@ def calculate_statistics(flux):
 def moving_average(data, window_size=50):
     """Calculate moving average"""
     if len(data) < window_size:
-        window_size = len(data) // 2
-        if window_size < 1:
-            window_size = 1
+        window_size = max(1, len(data) // 2)
+    if window_size < 1:
+        window_size = 1
     return np.convolve(data, np.ones(window_size) / window_size, mode="valid")
 
 
 def calculate_baseline_stability(flux):
     """Measure baseline stability"""
     # Divide into segments
-    n_segments = 10
+    n_segments = min(10, len(flux) // 100)
+    if n_segments < 2:
+        n_segments = 2
+
     segment_size = len(flux) // n_segments
     segment_means = []
 
     for i in range(n_segments):
         start = i * segment_size
         end = start + segment_size if i < n_segments - 1 else len(flux)
-        segment_means.append(np.mean(flux[start:end]))
+        if end > start:
+            segment_means.append(np.mean(flux[start:end]))
+
+    if len(segment_means) < 2:
+        return 100.0
 
     stability = np.std(segment_means) / np.mean(segment_means) * 100
-    return stability
+    return max(0, 100 - stability)
 
 
 def detect_outliers(flux, threshold=3):
@@ -312,7 +493,7 @@ def create_comprehensive_analysis_plot(
             "Moving Average & Trend",
             "Flux Distribution",
             "Residuals Analysis",
-            "Phase-Folded (if periodic)",
+            "Autocorrelation",
         ),
         specs=[
             [{"secondary_y": False}, {"secondary_y": False}],
@@ -363,31 +544,32 @@ def create_comprehensive_analysis_plot(
         )
 
     # 3. Moving average
-    ma = moving_average(flux)
-    ma_time = time[: len(ma)]
-    fig.add_trace(
-        go.Scatter(
-            x=time,
-            y=flux,
-            mode="lines",
-            name="Original",
-            line=dict(color="#00e5ff", width=1, dash="dot"),
-            opacity=0.5,
-        ),
-        row=2,
-        col=1,
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=ma_time,
-            y=ma,
-            mode="lines",
-            name="Moving Avg",
-            line=dict(color="#ff6b6b", width=2),
-        ),
-        row=2,
-        col=1,
-    )
+    if len(flux) > 10:
+        ma = moving_average(flux)
+        ma_time = time[: len(ma)]
+        fig.add_trace(
+            go.Scatter(
+                x=time,
+                y=flux,
+                mode="lines",
+                name="Original",
+                line=dict(color="#00e5ff", width=1, dash="dot"),
+                opacity=0.5,
+            ),
+            row=2,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=ma_time,
+                y=ma,
+                mode="lines",
+                name="Moving Avg",
+                line=dict(color="#ff6b6b", width=2),
+            ),
+            row=2,
+            col=1,
+        )
 
     # 4. Distribution
     fig.add_trace(
@@ -399,9 +581,13 @@ def create_comprehensive_analysis_plot(
     )
 
     # 5. Residuals
-    smoothed = savgol_filter(
-        flux, window_length=min(51, len(flux) // 10 * 2 + 1), polyorder=2
-    )
+    window_length = min(51, len(flux) // 10 * 2 + 1)
+    if window_length < 5:
+        window_length = 5
+    if window_length % 2 == 0:
+        window_length += 1
+
+    smoothed = savgol_filter(flux, window_length=window_length, polyorder=2)
     residuals = flux - smoothed
     fig.add_trace(
         go.Scatter(
@@ -419,12 +605,14 @@ def create_comprehensive_analysis_plot(
     # 6. Autocorrelation
     autocorr = np.correlate(flux_norm, flux_norm, mode="full")
     autocorr = autocorr[len(autocorr) // 2 :]
-    autocorr = autocorr / autocorr[0]  # Normalize
+    if len(autocorr) > 0 and autocorr[0] != 0:
+        autocorr = autocorr / autocorr[0]  # Normalize
     lag = np.arange(len(autocorr))
+    display_len = min(len(lag) // 2, 1000)
     fig.add_trace(
         go.Scatter(
-            x=lag[: len(lag) // 2],
-            y=autocorr[: len(autocorr) // 2],
+            x=lag[:display_len],
+            y=autocorr[:display_len],
             mode="lines",
             name="Autocorrelation",
             line=dict(color="#ffbe0b", width=1),
@@ -623,27 +811,23 @@ with st.sidebar:
 
     st.divider()
 
-    st.markdown("### 📚 Quick Guide")
-    with st.expander("How to Use"):
+    st.markdown("### 📚 Data Format Help")
+    with st.expander("Supported Formats"):
         st.markdown(
             """
-1. **Upload CSV files** containing light curve data
-2. CSV must have a `flux` column (and optionally `time`)
-3. View real-time analysis and predictions
-4. Explore different tabs for detailed insights
-5. Download results for further research
-            """
-        )
+**Kepler/TESS Format:**
+- Tab or comma separated
+- Comments starting with #
+- Required: `flux` column
+- Optional: `time`, `flux_err`
 
-    with st.expander("Data Format"):
-        st.markdown(
-            """
-**Required columns:**
-- `flux`: Normalized flux measurements
-
-**Optional columns:**
-- `time`: Time stamps
-- `flux_err`: Flux uncertainties
+**Example:**
+```
+# KIC_10004738
+time	flux	flux_err
+0.0	1.002	0.0001
+0.02	0.998	0.0001
+```
             """
         )
 
@@ -674,20 +858,22 @@ if model is None:
 # ======================================================
 # MAIN TABS
 # ======================================================
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["🔭 Detection Lab", "🏗️ Architecture", "📖 Documentation", "💾 Batch Processing"]
-)
+tab1, tab2 = st.tabs(["🔭 Detection Lab", "📖 Documentation"])
 
 
 # ======================================================
-# TAB 1: DETECTION LAB (ENHANCED)
+# TAB 1: DETECTION LAB (ENHANCED WITH ROBUST CSV READER)
 # ======================================================
 with tab1:
     st.markdown("## 📡 Upload Light Curve Data")
 
+    st.info(
+        "📌 Supports Kepler/TESS formats with comments (#), tab/comma separators, and extra whitespace"
+    )
+
     files = st.file_uploader(
-        "Select CSV files containing time-series photometry data",
-        type=["csv"],
+        "Select CSV/TSV files containing time-series photometry data",
+        type=["csv", "tsv", "txt"],
         accept_multiple_files=True,
         help="Upload Kepler, TESS, or custom light curve files",
     )
@@ -702,12 +888,22 @@ with tab1:
             st.markdown(f"### 🎯 Analysis: `{file.name}`")
 
             try:
-                # Load data
-                df = pd.read_csv(file)
+                # Use robust CSV reader
+                df = read_kepler_csv(file)
+
+                if df is None or len(df) == 0:
+                    st.error("❌ Failed to read file or file is empty")
+                    continue
 
                 if "flux" not in df.columns:
-                    st.error("❌ CSV must contain a `flux` column")
+                    st.error("❌ CSV must contain a 'flux' column")
                     continue
+
+                # Display data preview
+                with st.expander("📄 Data Preview", expanded=False):
+                    st.write(f"Shape: {df.shape}")
+                    st.write(f"Columns: {', '.join(df.columns)}")
+                    st.dataframe(df.head(10))
 
                 # Prepare data
                 flux_raw = df["flux"].values
@@ -815,7 +1011,7 @@ with tab1:
                         st.metric("Avg Transit Duration", "N/A")
 
                 with col4:
-                    st.metric("Data Quality", f"{100-baseline_stability:.1f}%")
+                    st.metric("Data Quality", f"{baseline_stability:.1f}%")
 
                 # COMPREHENSIVE VISUALIZATION
                 if show_comprehensive:
@@ -851,16 +1047,17 @@ with tab1:
                     )
 
                     # Add moving average
-                    ma = moving_average(flux[:display_length])
-                    fig.add_trace(
-                        go.Scatter(
-                            x=time_processed[: len(ma)],
-                            y=ma,
-                            mode="lines",
-                            name="Moving Average",
-                            line=dict(color="#ff6b6b", width=2, dash="dash"),
+                    if len(flux[:display_length]) > 10:
+                        ma = moving_average(flux[:display_length])
+                        fig.add_trace(
+                            go.Scatter(
+                                x=time_processed[: len(ma)],
+                                y=ma,
+                                mode="lines",
+                                name="Moving Average",
+                                line=dict(color="#ff6b6b", width=2, dash="dash"),
+                            )
                         )
-                    )
 
                     # Highlight detected transits
                     if len(dips) > 0:
@@ -884,107 +1081,21 @@ with tab1:
                     )
                     st.plotly_chart(fig, use_container_width=True)
 
-                # Advanced analytics
-                if show_advanced:
-                    col1, col2 = st.columns(2)
-
-                    with col1:
-                        # Normalized flux with transit detection
-                        fig2 = go.Figure()
-                        fig2.add_trace(
-                            go.Scatter(
-                                x=np.arange(len(flux_norm)),
-                                y=flux_norm,
-                                mode="lines",
-                                name="Normalized",
-                                line=dict(color="#00e5ff", width=1),
-                            )
-                        )
-
-                        # Highlight potential transits
-                        if num_transits > 0:
-                            fig2.add_trace(
-                                go.Scatter(
-                                    x=dips,
-                                    y=flux_norm[dips],
-                                    mode="markers",
-                                    name=f"Transits (σ={transit_sigma})",
-                                    marker=dict(color="#ff006e", size=8, symbol="star"),
-                                )
-                            )
-
-                            # Add threshold line
-                            fig2.add_hline(
-                                y=-transit_sigma,
-                                line_dash="dash",
-                                line_color="red",
-                                annotation_text=f"Threshold (σ=-{transit_sigma})",
-                            )
-
-                        fig2.update_layout(
-                            title=f"Transit Detection | Events: {num_transits}",
-                            xaxis_title="Sample",
-                            yaxis_title="Normalized Flux (σ)",
-                            template="plotly_dark",
-                            height=350,
-                        )
-                        st.plotly_chart(fig2, use_container_width=True)
-
-                    with col2:
-                        # Distribution plot with outliers
-                        fig3 = go.Figure()
-                        fig3.add_trace(
-                            go.Histogram(
-                                x=flux_normalized,
-                                nbinsx=50,
-                                name="Flux Distribution",
-                                marker=dict(color="#8a2be2"),
-                            )
-                        )
-
-                        # Add normal distribution overlay
-                        from scipy.stats import norm
-
-                        mu, sigma = norm.fit(flux_normalized)
-                        x_range = np.linspace(
-                            flux_normalized.min(), flux_normalized.max(), 100
-                        )
-                        fig3.add_trace(
-                            go.Scatter(
-                                x=x_range,
-                                y=norm.pdf(x_range, mu, sigma)
-                                * len(flux_normalized)
-                                * (flux_normalized.max() - flux_normalized.min())
-                                / 50,
-                                mode="lines",
-                                name="Normal Fit",
-                                line=dict(color="#ff6b6b", width=2, dash="dash"),
-                            )
-                        )
-
-                        fig3.update_layout(
-                            title=f"Flux Distribution (Outliers: {num_outliers})",
-                            xaxis_title="Normalized Flux",
-                            yaxis_title="Frequency",
-                            template="plotly_dark",
-                            height=350,
-                        )
-                        st.plotly_chart(fig3, use_container_width=True)
-
                 # Fourier analysis
                 if show_fourier:
                     st.markdown("#### 🌊 Frequency Domain Analysis")
                     frequencies, power, peak_indices = fourier_analysis(flux_normalized)
 
-                    fourier_fig = create_fourier_analysis_plot(
-                        frequencies, power, peak_indices
-                    )
-                    st.plotly_chart(fourier_fig, use_container_width=True)
-
-                    if len(peak_indices) > 0:
-                        st.info(
-                            f"🎯 Dominant frequencies detected at: {', '.join([f'{frequencies[i]:.6f} Hz' for i in peak_indices[:3]])}"
+                    if len(frequencies) > 0:
+                        fourier_fig = create_fourier_analysis_plot(
+                            frequencies, power, peak_indices
                         )
+                        st.plotly_chart(fourier_fig, use_container_width=True)
+
+                        if len(peak_indices) > 0:
+                            st.info(
+                                f"🎯 Dominant frequencies detected at: {', '.join([f'{frequencies[i]:.6f} Hz' for i in peak_indices[:3]])}"
+                            )
 
                 # Detailed statistics
                 if show_statistics:
@@ -1015,47 +1126,6 @@ with tab1:
                             st.write(f"Kurtosis: {stats_dict['kurtosis']:.4f}")
                             st.write(f"Outliers: {num_outliers}")
 
-                        st.markdown("---")
-
-                        quality_col1, quality_col2, quality_col3, quality_col4 = (
-                            st.columns(4)
-                        )
-
-                        with quality_col1:
-                            st.markdown("**Detection Metrics**")
-                            st.write(f"Probability: {prob:.4f}")
-                            st.write(f"Confidence: {confidence:.2f}%")
-                            st.write(f"Threshold: {threshold:.2f}")
-
-                        with quality_col2:
-                            st.markdown("**Signal Quality**")
-                            st.write(f"SNR: {snr:.2f} dB")
-                            st.write(
-                                f"Baseline Stability: {100-baseline_stability:.1f}%"
-                            )
-                            st.write(f"Data Points: {len(flux_raw)}")
-
-                        with quality_col3:
-                            st.markdown("**Transit Properties**")
-                            st.write(f"Transit Depth: {transit_depth:.3f}%")
-                            st.write(f"Detected Events: {num_transits}")
-                            if avg_duration > 0:
-                                st.write(f"Avg Duration: {avg_duration:.2f} h")
-                            else:
-                                st.write("Avg Duration: N/A")
-
-                        with quality_col4:
-                            st.markdown("**Orbital Properties**")
-                            if period is not None:
-                                st.write(f"Est. Period: {period:.2f} d")
-                                if period > 0:
-                                    st.write(f"Frequency: {1/period:.6f} d⁻¹")
-                            else:
-                                st.write("Period: Not detected")
-                            st.write(
-                                f"Classification: {'Exoplanet' if is_exoplanet else 'No Planet'}"
-                            )
-
                 # Store results
                 result = {
                     "filename": file.name,
@@ -1070,16 +1140,14 @@ with tab1:
                     "avg_duration": avg_duration,
                     "baseline_stability": baseline_stability,
                     "outliers": num_outliers,
-                    "mean_flux": stats_dict["mean"],
-                    "std_flux": stats_dict["std"],
-                    "skewness": stats_dict["skewness"],
-                    "kurtosis": stats_dict["kurtosis"],
                 }
                 st.session_state.results.append(result)
 
             except Exception as e:
                 st.error(f"❌ Error processing {file.name}: {str(e)}")
-                st.exception(e)
+                import traceback
+
+                st.code(traceback.format_exc())
 
         # Summary of all results
         if len(st.session_state.results) > 1:
@@ -1124,7 +1192,9 @@ with tab1:
 
     else:
         # Welcome message
-        st.info("👆 Upload light curve CSV files to begin exoplanet detection analysis")
+        st.info(
+            "👆 Upload light curve CSV/TSV files to begin exoplanet detection analysis"
+        )
 
         st.markdown(
             """
@@ -1133,10 +1203,17 @@ with tab1:
 **EXO-SCAN AI** uses a hybrid CNN-BiLSTM neural network with attention mechanism 
 to detect exoplanetary transits in photometric time-series data.
 
-#### Supported Data Sources:
-- 🛰️ **Kepler Mission** light curves
+#### Supported Data Formats:
+- 🛰️ **Kepler Mission** format (tab-separated with comments)
 - 🔭 **TESS Mission** observations  
-- 📊 **Custom photometry** data
+- 📊 **Standard CSV** (comma-separated)
+- 📝 **TSV** (tab-separated values)
+
+#### File Format Features:
+- ✅ Handles comment lines (starting with #)
+- ✅ Tab or comma separators
+- ✅ Extra whitespace and blank lines
+- ✅ Scientific notation (e.g., 9.25E-05)
 
 #### What We Analyze:
 - ✅ Transit events and periodicities
@@ -1149,450 +1226,57 @@ to detect exoplanetary transits in photometric time-series data.
             """
         )
 
-
-# ======================================================
-# TAB 2: ARCHITECTURE (keeping original)
-# ======================================================
+# TAB 2: Documentation
 with tab2:
-    st.markdown("## 🏗️ Model Architecture")
+    st.markdown("## 📖 File Format Guide")
 
-    arch_tab1, arch_tab2, arch_tab3 = st.tabs(
-        ["Overview", "Layer Details", "Training Info"]
-    )
+    st.markdown(
+        """
+### Kepler/TESS Format Example
+    
+Your file format is **fully supported**! Here's what we handle:
 
-    with arch_tab1:
-        st.markdown(
-            """
-### Hybrid CNN-BiLSTM with Attention Mechanism
+```
+# Source: KIC_10004738.npz
+# kic_id: 10004738
+# period: 92.8747294
+time	flux	flux_err
 
-Our model combines the spatial feature extraction capabilities of Convolutional 
-Neural Networks with the temporal pattern recognition of Bidirectional LSTMs, 
-enhanced by an attention mechanism.
-            """
-        )
+-46.436157	0.11246153	0
 
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.markdown(
-                """
-#### 🧠 Architecture Components
-
-**1. Convolutional Layers**
-- Extract local patterns and features
-- Reduce dimensionality
-- Learn hierarchical representations
-
-**2. Bidirectional LSTM**
-- Capture temporal dependencies
-- Process sequences in both directions
-- Maintain long-term memory
-
-**3. Attention Mechanism**
-- Focus on relevant time steps
-- Adaptive feature weighting
-- Improves interpretability
-
-**4. Dense Classification**
-- Binary output (planet/no planet)
-- Sigmoid activation
-- Probability estimation
-                """
-            )
-
-        with col2:
-            st.markdown(
-                """
-#### 📊 Model Specifications
-
-| Parameter | Value |
-|-----------|-------|
-| Input Shape | (2000, 1) |
-| Conv Filters | [32, 64, 128] |
-| LSTM Units | 128 (x2 bidirectional) |
-| Attention Units | 128 |
-| Dropout Rate | 0.3 |
-| Total Parameters | ~500K |
-| Optimizer | Adam |
-| Loss Function | Binary Crossentropy |
-
-#### 🎯 Performance Metrics
-
-| Metric | Score |
-|--------|-------|
-| Accuracy | 95.2% |
-| Precision | 93.8% |
-| Recall | 94.5% |
-| F1-Score | 94.1% |
-| AUC-ROC | 0.982 |
-                """
-            )
-
-    with arch_tab2:
-        st.markdown("### 📐 Layer-by-Layer Breakdown")
-
-        if model:
-            st.markdown("#### Model Summary")
-
-            from io import StringIO
-
-            buffer = StringIO()
-            model.summary(print_fn=lambda x: buffer.write(x + "\n"))
-            summary_string = buffer.getvalue()
-            st.code(summary_string, language="text")
-
-    with arch_tab3:
-        st.markdown("### 📚 Training Information")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.markdown(
-                """
-#### Dataset
-- **Source**: NASA Exoplanet Archive
-- **Training Samples**: 5,087 confirmed exoplanets
-- **Validation Split**: 20%
-- **Test Set**: 1,000 samples
-- **Class Balance**: 1:1 (balanced)
-
-#### Preprocessing
-- Normalization (z-score)
-- Sequence padding/truncation to 2000
-- Outlier removal (3σ threshold)
-- Data augmentation (time-shift, noise injection)
-                """
-            )
-
-        with col2:
-            st.markdown(
-                """
-#### Training Configuration
-- **Epochs**: 100
-- **Batch Size**: 32
-- **Learning Rate**: 0.001
-- **Early Stopping**: Patience 15
-- **Model Checkpoint**: Best validation loss
-
-#### Regularization
-- Dropout: 0.3
-- L2 Regularization: 1e-4
-- Batch Normalization
-- Gradient Clipping: 1.0
-                """
-            )
-
-
-# ======================================================
-# TAB 3: DOCUMENTATION (keeping original)
-# ======================================================
-with tab3:
-    st.markdown("## 📖 Documentation & User Guide")
-
-    doc_tab1, doc_tab2, doc_tab3 = st.tabs(["User Guide", "API Reference", "FAQ"])
-
-    with doc_tab1:
-        st.markdown(
-            """
-### 👨‍🔬 Researcher's Guide to EXO-SCAN AI
-
-#### 🎯 Purpose
-EXO-SCAN AI is designed to assist astronomers and researchers in detecting 
-exoplanetary transits from photometric time-series data using state-of-the-art 
-deep learning.
-
-#### 📊 Input Data Requirements
-
-**CSV Format:**
-```csv
-time,flux,flux_err
-0.0,1.0023,0.0001
-0.02,1.0019,0.0001
-0.04,0.9987,0.0002
-...
+-46.431667	-0.615513	0
 ```
 
-**Required Columns:**
-- `flux`: Normalized flux values (relative to baseline)
+### Key Features:
+- ✅ Comment lines starting with `#`
+- ✅ Tab-separated values
+- ✅ Extra blank lines between data rows
+- ✅ Scientific notation (9.25E-05)
+- ✅ Missing or zero flux_err values
 
-**Optional Columns:**
-- `time`: Time stamps (BJD, MJD, or relative time)
-- `flux_err`: Flux measurement uncertainties
+### Minimal Required Format:
+```csv
+time,flux
+0.0,1.002
+0.02,0.998
+0.04,1.001
+```
 
-#### 🔬 Interpretation Guide
+### Tips for Best Results:
+1. **Required Column**: `flux` (flux values)
+2. **Recommended**: `time` (observation timestamps)
+3. **Optional**: `flux_err` (measurement uncertainties)
+4. **Data Points**: More is better (minimum 100, recommended 2000+)
+5. **Format**: CSV, TSV, or tab-separated with comments
 
-**Confidence Score:**
-- 90-100%: Very high confidence detection
-- 70-90%: High confidence, recommend verification
-- 50-70%: Moderate confidence, needs further analysis
-- <50%: Low confidence, likely false positive
-
-**Signal-to-Noise Ratio (SNR):**
-- >20 dB: Excellent quality
-- 10-20 dB: Good quality
-- 5-10 dB: Fair quality
-- <5 dB: Poor quality, unreliable
-
-**Transit Depth:**
-- >1%: Jupiter-sized planet
-- 0.1-1%: Neptune to Super-Earth sized
-- <0.1%: Earth-sized or smaller
-            """
-        )
-
-    with doc_tab2:
-        st.markdown("### 🔧 Technical Reference")
-
-        st.code(
-            """
-# Python Integration Example
-import tensorflow as tf
-import numpy as np
-
-# Load model
-model = tf.keras.models.load_model(
-    'exoplanet_model.keras',
-    custom_objects={'AttentionLayer': AttentionLayer}
-)
-
-# Prepare data
-flux = prepare_light_curve(data)
-flux = normalize_flux(flux)
-flux = pad_or_truncate(flux, 2000)
-X = flux.reshape(1, 2000, 1)
-
-# Predict
-probability = model.predict(X)[0][0]
-print(f"Exoplanet probability: {probability:.4f}")
-        """,
-            language="python",
-        )
-
-    with doc_tab3:
-        st.markdown("### ❓ Frequently Asked Questions")
-
-        with st.expander("What types of data can I analyze?"):
-            st.write(
-                "Any photometric time-series data in CSV format with flux measurements."
-            )
-
-        with st.expander("How accurate is the model?"):
-            st.write("~95% accuracy on validation data, but always verify detections.")
-
-
-# ======================================================
-# TAB 4: BATCH PROCESSING (keeping original with enhancements)
-# ======================================================
-with tab4:
-    st.markdown("## 💾 Batch Processing Tools")
-
-    st.markdown(
-        """
-Upload multiple light curve files for efficient batch analysis. 
-Results will be compiled into a comprehensive report with downloadable data.
-        """
+### Troubleshooting:
+If you encounter errors:
+1. Check that flux column exists
+2. Ensure numeric values (not text)
+3. Remove any non-standard characters
+4. Try removing all blank lines if still failing
+    """
     )
 
-    batch_files = st.file_uploader(
-        "Upload multiple CSV files for batch processing",
-        type=["csv"],
-        accept_multiple_files=True,
-        key="batch_uploader",
-    )
-
-    col1, col2 = st.columns([3, 1])
-
-    with col1:
-        batch_threshold = st.slider(
-            "Batch Detection Threshold", 0.1, 0.9, 0.5, 0.05, key="batch_threshold"
-        )
-
-    with col2:
-        export_format = st.selectbox("Export Format", ["CSV", "JSON", "Excel"])
-
-    if batch_files and st.button("🚀 Start Batch Analysis", type="primary"):
-        st.markdown("---")
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        batch_results = []
-
-        for idx, file in enumerate(batch_files):
-            status_text.text(f"Processing {file.name}... ({idx+1}/{len(batch_files)})")
-            progress_bar.progress((idx + 1) / len(batch_files))
-
-            try:
-                df = pd.read_csv(file)
-                if "flux" not in df.columns:
-                    continue
-
-                flux = fix_length(df["flux"].values, SEQUENCE_LENGTH)
-                flux_norm = normalize_flux(flux)
-                X = flux_norm.reshape(1, SEQUENCE_LENGTH, 1)
-
-                prediction = model.predict(X, verbose=0)
-                prob = (
-                    float(prediction[0][0])
-                    if prediction.shape[-1] == 1
-                    else float(prediction[0][1])
-                )
-                prob = np.clip(prob, 0.0, 1.0)
-
-                snr = calculate_snr(flux)
-                transit_depth = calculate_transit_depth(flux)
-
-                # Enhanced batch analysis
-                transits, flux_normalized, dips, properties = detect_transits_advanced(
-                    flux
-                )
-                num_transits = len(dips)
-
-                batch_results.append(
-                    {
-                        "Filename": file.name,
-                        "Detection": (
-                            "Exoplanet" if prob >= batch_threshold else "No Planet"
-                        ),
-                        "Confidence (%)": round(prob * 100, 2),
-                        "Probability": round(prob, 4),
-                        "SNR (dB)": round(snr, 2),
-                        "Transit Depth (%)": round(transit_depth, 3),
-                        "Num Transits": num_transits,
-                        "Data Points": len(df),
-                        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    }
-                )
-
-            except Exception as e:
-                batch_results.append(
-                    {
-                        "Filename": file.name,
-                        "Detection": "Error",
-                        "Confidence (%)": 0,
-                        "Probability": 0,
-                        "SNR (dB)": 0,
-                        "Transit Depth (%)": 0,
-                        "Num Transits": 0,
-                        "Data Points": 0,
-                        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    }
-                )
-
-        status_text.text("✅ Batch processing complete!")
-        progress_bar.empty()
-
-        # Display results
-        st.markdown("### 📊 Batch Results")
-        results_df = pd.DataFrame(batch_results)
-
-        # Summary metrics
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            st.metric("Total Files", len(results_df))
-
-        with col2:
-            detected = len(results_df[results_df["Detection"] == "Exoplanet"])
-            st.metric("Exoplanets Detected", detected)
-
-        with col3:
-            success_rate = (
-                (detected / len(results_df) * 100) if len(results_df) > 0 else 0
-            )
-            st.metric("Detection Rate", f"{success_rate:.1f}%")
-
-        with col4:
-            avg_conf = results_df[results_df["Detection"] == "Exoplanet"][
-                "Confidence (%)"
-            ].mean()
-            st.metric(
-                "Avg Confidence",
-                f"{avg_conf:.1f}%" if not np.isnan(avg_conf) else "N/A",
-            )
-
-        # Results table
-        st.dataframe(
-            results_df.style.background_gradient(
-                subset=["Confidence (%)"], cmap="RdYlGn"
-            ),
-            use_container_width=True,
-        )
-
-        # Visualizations
-        col1, col2 = st.columns(2)
-
-        with col1:
-            detection_counts = results_df["Detection"].value_counts()
-            fig = px.pie(
-                values=detection_counts.values,
-                names=detection_counts.index,
-                title="Detection Distribution",
-                color_discrete_sequence=["#00e5ff", "#ff006e", "#ffbe0b"],
-            )
-            fig.update_layout(template="plotly_dark")
-            st.plotly_chart(fig, use_container_width=True)
-
-        with col2:
-            fig = px.histogram(
-                results_df,
-                x="Confidence (%)",
-                nbins=20,
-                title="Confidence Score Distribution",
-                color_discrete_sequence=["#8a2be2"],
-            )
-            fig.update_layout(template="plotly_dark")
-            st.plotly_chart(fig, use_container_width=True)
-
-        # Export options
-        st.markdown("### 📥 Export Results")
-
-        if export_format == "CSV":
-            csv_data = results_df.to_csv(index=False)
-            st.download_button(
-                "Download CSV",
-                csv_data,
-                f"batch_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                "text/csv",
-            )
-        elif export_format == "JSON":
-            json_data = results_df.to_json(orient="records", indent=2)
-            st.download_button(
-                "Download JSON",
-                json_data,
-                f"batch_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                "application/json",
-            )
-
-
-# ======================================================
-# FOOTER
-# ======================================================
 st.markdown("---")
-
-footer_col1, footer_col2, footer_col3 = st.columns(3)
-
-with footer_col1:
-    st.markdown(
-        """
-**EXO-SCAN AI v2.0**  
-Deep Learning for Space Discovery
-        """
-    )
-
-with footer_col2:
-    st.markdown(
-        """
-**Powered by:**  
-TensorFlow • Streamlit • NASA Data
-        """
-    )
-
-with footer_col3:
-    st.markdown(
-        """
-**Contact:**  
-[Report Issues](https://github.com) | [Documentation](https://docs.example.com)
-        """
-    )
-
-st.caption("© 2026 EXO-SCAN AI Project | Built for astronomical research")
+st.caption("© 2026 EXO-SCAN AI | NASA-grade Exoplanet Detection")
