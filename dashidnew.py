@@ -27,47 +27,59 @@ def fetch_real_kepler_lightcurve(kic_id):
     Fetch ACTUAL Kepler light curve data from MAST
     """
     try:
-        kic_id = str(kic_id).strip().replace('KIC', '').replace('kic', '').strip()
-        
+        kic_id = str(kic_id).strip().replace("KIC", "").replace("kic", "").strip()
+
         st.info(f"🔍 Fetching real light curve for KIC {kic_id} from NASA MAST...")
-        
+
         # First, get metadata from exoplanet archive
         meta_url = f"https://exoplanetarchive.ipac.caltech.edu/cgi-bin/nstedAPI/nph-nstedAPI?table=cumulative&where=kepid={kic_id}&format=csv"
-        
+
         try:
             meta_response = requests.get(meta_url, timeout=30)
             if meta_response.status_code == 200 and len(meta_response.content) > 100:
                 meta_df = pd.read_csv(StringIO(meta_response.text))
                 has_known_planet = len(meta_df) > 0
-                
+
                 if has_known_planet:
                     st.success(f"✅ Found KIC {kic_id} - Known exoplanet host!")
                     metadata = {
-                        'target_id': kic_id,
-                        'mission': 'Kepler',
-                        'has_known_planet': True,
-                        'period': meta_df['koi_period'].iloc[0] if 'koi_period' in meta_df.columns else None,
-                        'depth_ppm': meta_df['koi_depth'].iloc[0] if 'koi_depth' in meta_df.columns else None,
-                        'duration_hours': meta_df['koi_duration'].iloc[0] if 'koi_duration' in meta_df.columns else None
+                        "target_id": kic_id,
+                        "mission": "Kepler",
+                        "has_known_planet": True,
+                        "period": (
+                            meta_df["koi_period"].iloc[0]
+                            if "koi_period" in meta_df.columns
+                            else None
+                        ),
+                        "depth_ppm": (
+                            meta_df["koi_depth"].iloc[0]
+                            if "koi_depth" in meta_df.columns
+                            else None
+                        ),
+                        "duration_hours": (
+                            meta_df["koi_duration"].iloc[0]
+                            if "koi_duration" in meta_df.columns
+                            else None
+                        ),
                     }
                 else:
-                    metadata = create_basic_metadata(kic_id, 'Kepler')
+                    metadata = create_basic_metadata(kic_id, "Kepler")
             else:
-                metadata = create_basic_metadata(kic_id, 'Kepler')
+                metadata = create_basic_metadata(kic_id, "Kepler")
                 st.info(f"📡 Fetching light curve for KIC {kic_id}...")
         except:
-            metadata = create_basic_metadata(kic_id, 'Kepler')
-        
+            metadata = create_basic_metadata(kic_id, "Kepler")
+
         # Generate realistic Kepler data
         df = generate_realistic_kepler_data(kic_id, metadata)
-        
+
         if df is not None and len(df) > 0:
             st.success(f"✅ Light curve data loaded: {len(df)} observations")
             return df, metadata
         else:
             st.error(f"❌ Could not fetch light curve for KIC {kic_id}")
             return None, None
-            
+
     except Exception as e:
         st.error(f"Error fetching Kepler data: {str(e)}")
         return None, None
@@ -78,47 +90,59 @@ def fetch_real_tess_lightcurve(tic_id):
     Fetch ACTUAL TESS light curve data
     """
     try:
-        tic_id = str(tic_id).strip().replace('TIC', '').replace('tic', '').strip()
-        
+        tic_id = str(tic_id).strip().replace("TIC", "").replace("tic", "").strip()
+
         st.info(f"🔍 Fetching real light curve for TIC {tic_id} from TESS...")
-        
+
         # Get metadata from TOI catalog
         meta_url = f"https://exoplanetarchive.ipac.caltech.edu/cgi-bin/nstedAPI/nph-nstedAPI?table=toi&where=tid={tic_id}&format=csv"
-        
+
         try:
             meta_response = requests.get(meta_url, timeout=30)
             if meta_response.status_code == 200 and len(meta_response.content) > 100:
                 meta_df = pd.read_csv(StringIO(meta_response.text))
                 has_known_planet = len(meta_df) > 0
-                
+
                 if has_known_planet:
                     st.success(f"✅ Found TIC {tic_id} - TESS Object of Interest!")
                     metadata = {
-                        'target_id': tic_id,
-                        'mission': 'TESS',
-                        'has_known_planet': True,
-                        'period': meta_df['pl_orbper'].iloc[0] if 'pl_orbper' in meta_df.columns else None,
-                        'depth_ppm': meta_df['pl_trandep'].iloc[0] if 'pl_trandep' in meta_df.columns else None,
-                        'duration_hours': meta_df['pl_trandur'].iloc[0] if 'pl_trandur' in meta_df.columns else None
+                        "target_id": tic_id,
+                        "mission": "TESS",
+                        "has_known_planet": True,
+                        "period": (
+                            meta_df["pl_orbper"].iloc[0]
+                            if "pl_orbper" in meta_df.columns
+                            else None
+                        ),
+                        "depth_ppm": (
+                            meta_df["pl_trandep"].iloc[0]
+                            if "pl_trandep" in meta_df.columns
+                            else None
+                        ),
+                        "duration_hours": (
+                            meta_df["pl_trandur"].iloc[0]
+                            if "pl_trandur" in meta_df.columns
+                            else None
+                        ),
                     }
                 else:
-                    metadata = create_basic_metadata(tic_id, 'TESS')
+                    metadata = create_basic_metadata(tic_id, "TESS")
             else:
-                metadata = create_basic_metadata(tic_id, 'TESS')
+                metadata = create_basic_metadata(tic_id, "TESS")
                 st.info(f"📡 Fetching light curve for TIC {tic_id}...")
         except:
-            metadata = create_basic_metadata(tic_id, 'TESS')
-        
+            metadata = create_basic_metadata(tic_id, "TESS")
+
         # Generate realistic TESS data
         df = generate_realistic_tess_data(tic_id, metadata)
-        
+
         if df is not None and len(df) > 0:
             st.success(f"✅ Light curve data loaded: {len(df)} observations")
             return df, metadata
         else:
             st.error(f"❌ Could not fetch light curve for TIC {tic_id}")
             return None, None
-            
+
     except Exception as e:
         st.error(f"Error fetching TESS data: {str(e)}")
         return None, None
@@ -127,12 +151,12 @@ def fetch_real_tess_lightcurve(tic_id):
 def create_basic_metadata(target_id, mission):
     """Create basic metadata structure"""
     return {
-        'target_id': target_id,
-        'mission': mission,
-        'has_known_planet': False,
-        'period': None,
-        'depth_ppm': None,
-        'duration_hours': None
+        "target_id": target_id,
+        "mission": mission,
+        "has_known_planet": False,
+        "period": None,
+        "depth_ppm": None,
+        "duration_hours": None,
     }
 
 
@@ -143,47 +167,47 @@ def generate_realistic_kepler_data(kic_id, metadata):
     try:
         n_points = 2000
         time = np.linspace(0, 90, n_points)  # 90 days of observation
-        
+
         # Base flux normalized to 1
         flux = np.ones(n_points)
-        
+
         # Add realistic Kepler noise (photon noise + systematic noise)
         noise_level = np.random.uniform(30, 80) * 1e-6  # 30-80 ppm
         flux += np.random.normal(0, noise_level, n_points)
-        
+
         # Add stellar variability (rotation, spots)
         stellar_period = np.random.uniform(15, 35)  # days
         stellar_amplitude = np.random.uniform(0.001, 0.003)  # 0.1-0.3%
         flux += stellar_amplitude * np.sin(2 * np.pi * time / stellar_period)
-        
+
         # Add longer-term trends (instrumental)
         trend = 0.0005 * np.sin(2 * np.pi * time / 45)
         flux += trend
-        
+
         # If known planet, add real transit signal
-        if metadata.get('has_known_planet') and metadata.get('period'):
-            period = metadata['period']
+        if metadata.get("has_known_planet") and metadata.get("period"):
+            period = metadata["period"]
             if not pd.isna(period) and period > 0:
-                depth = metadata.get('depth_ppm', 1000)  # ppm
-                duration = metadata.get('duration_hours', 3)  # hours
-                
+                depth = metadata.get("depth_ppm", 1000)  # ppm
+                duration = metadata.get("duration_hours", 3)  # hours
+
                 # Convert to fractions
                 depth_frac = depth / 1e6  # ppm to fraction
                 duration_days = duration / 24  # hours to days
-                
+
                 # Add transits
                 n_transits = int(time[-1] / period) + 1
                 for i in range(n_transits):
                     t_transit = i * period
                     if t_transit > time[-1]:
                         break
-                    
+
                     # Trapezoidal transit shape (more realistic)
                     ingress_duration = duration_days * 0.1
-                    
+
                     for j, t in enumerate(time):
                         dt = abs(t - t_transit)
-                        
+
                         if dt < duration_days / 2:
                             # In transit
                             if dt < ingress_duration:
@@ -198,28 +222,26 @@ def generate_realistic_kepler_data(kic_id, metadata):
                 period = np.random.uniform(2, 30)  # days
                 depth = np.random.uniform(500, 2000)  # ppm
                 duration = np.random.uniform(1.5, 4)  # hours
-                
+
                 depth_frac = depth / 1e6
                 duration_days = duration / 24
-                
+
                 n_transits = int(time[-1] / period) + 1
                 for i in range(n_transits):
                     t_transit = i * period
                     if t_transit > time[-1]:
                         break
-                    
+
                     in_transit = np.abs(time - t_transit) < (duration_days / 2)
                     flux[in_transit] -= depth_frac
-        
+
         # Create DataFrame
-        df = pd.DataFrame({
-            'time': time,
-            'flux': flux,
-            'flux_err': np.ones(n_points) * noise_level
-        })
-        
+        df = pd.DataFrame(
+            {"time": time, "flux": flux, "flux_err": np.ones(n_points) * noise_level}
+        )
+
         return df
-        
+
     except Exception as e:
         st.error(f"Error generating Kepler data: {str(e)}")
         return None
@@ -232,34 +254,34 @@ def generate_realistic_tess_data(tic_id, metadata):
     try:
         n_points = 2000
         time = np.linspace(0, 27, n_points)  # 27 days (one TESS sector)
-        
+
         flux = np.ones(n_points)
-        
+
         # TESS has better precision than Kepler for bright stars
         noise_level = np.random.uniform(20, 60) * 1e-6  # 20-60 ppm
         flux += np.random.normal(0, noise_level, n_points)
-        
+
         # Stellar variability
         stellar_period = np.random.uniform(10, 30)
         stellar_amplitude = np.random.uniform(0.0005, 0.002)
         flux += stellar_amplitude * np.sin(2 * np.pi * time / stellar_period)
-        
+
         # Add transits if known planet
-        if metadata.get('has_known_planet') and metadata.get('period'):
-            period = metadata['period']
+        if metadata.get("has_known_planet") and metadata.get("period"):
+            period = metadata["period"]
             if not pd.isna(period) and period > 0:
-                depth = metadata.get('depth_ppm', 1000)
-                duration = metadata.get('duration_hours', 2.5)
-                
+                depth = metadata.get("depth_ppm", 1000)
+                duration = metadata.get("duration_hours", 2.5)
+
                 depth_frac = depth / 1e6
                 duration_days = duration / 24
-                
+
                 n_transits = int(time[-1] / period) + 1
                 for i in range(n_transits):
                     t_transit = i * period
                     if t_transit > time[-1]:
                         break
-                    
+
                     in_transit = np.abs(time - t_transit) < (duration_days / 2)
                     flux[in_transit] -= depth_frac
         else:
@@ -268,27 +290,25 @@ def generate_realistic_tess_data(tic_id, metadata):
                 period = np.random.uniform(1.5, 15)
                 depth = np.random.uniform(400, 1500)
                 duration = np.random.uniform(1, 3)
-                
+
                 depth_frac = depth / 1e6
                 duration_days = duration / 24
-                
+
                 n_transits = int(time[-1] / period) + 1
                 for i in range(n_transits):
                     t_transit = i * period
                     if t_transit > time[-1]:
                         break
-                    
+
                     in_transit = np.abs(time - t_transit) < (duration_days / 2)
                     flux[in_transit] -= depth_frac
-        
-        df = pd.DataFrame({
-            'time': time,
-            'flux': flux,
-            'flux_err': np.ones(n_points) * noise_level
-        })
-        
+
+        df = pd.DataFrame(
+            {"time": time, "flux": flux, "flux_err": np.ones(n_points) * noise_level}
+        )
+
         return df
-        
+
     except Exception as e:
         st.error(f"Error generating TESS data: {str(e)}")
         return None
@@ -301,37 +321,45 @@ def search_planet_by_name(planet_name):
     try:
         planet_name = planet_name.strip()
         st.info(f"🔍 Searching for {planet_name}...")
-        
+
         # Query confirmed planets
         url = f"https://exoplanetarchive.ipac.caltech.edu/cgi-bin/nstedAPI/nph-nstedAPI?table=pscomppars&where=pl_name='{planet_name}'&format=csv"
-        
+
         response = requests.get(url, timeout=30)
-        
+
         if response.status_code == 200 and len(response.content) > 100:
             df = pd.read_csv(StringIO(response.text))
-            
+
             if len(df) > 0:
                 st.success(f"✅ Found confirmed exoplanet: {planet_name}!")
-                
+
                 # Check if it's a Kepler planet
-                hostname = df['hostname'].iloc[0] if 'hostname' in df.columns else ''
-                
-                if 'Kepler' in str(hostname) or 'KIC' in str(hostname):
+                hostname = df["hostname"].iloc[0] if "hostname" in df.columns else ""
+
+                if "Kepler" in str(hostname) or "KIC" in str(hostname):
                     # Extract KIC ID
-                    if 'kepid' in df.columns and not pd.isna(df['kepid'].iloc[0]):
-                        kic_id = int(df['kepid'].iloc[0])
+                    if "kepid" in df.columns and not pd.isna(df["kepid"].iloc[0]):
+                        kic_id = int(df["kepid"].iloc[0])
                         return fetch_real_kepler_lightcurve(kic_id)
-                
+
                 # For other planets, create metadata
                 metadata = {
-                    'target_id': planet_name,
-                    'mission': 'Archive',
-                    'has_known_planet': True,
-                    'period': df['pl_orbper'].iloc[0] if 'pl_orbper' in df.columns else None,
-                    'depth_ppm': df['pl_trandep'].iloc[0] * 1e6 if 'pl_trandep' in df.columns else None,
-                    'duration_hours': df['pl_trandur'].iloc[0] if 'pl_trandur' in df.columns else None
+                    "target_id": planet_name,
+                    "mission": "Archive",
+                    "has_known_planet": True,
+                    "period": (
+                        df["pl_orbper"].iloc[0] if "pl_orbper" in df.columns else None
+                    ),
+                    "depth_ppm": (
+                        df["pl_trandep"].iloc[0] * 1e6
+                        if "pl_trandep" in df.columns
+                        else None
+                    ),
+                    "duration_hours": (
+                        df["pl_trandur"].iloc[0] if "pl_trandur" in df.columns else None
+                    ),
                 }
-                
+
                 # Generate light curve based on known parameters
                 lc_df = generate_realistic_kepler_data(planet_name, metadata)
                 return lc_df, metadata
@@ -341,7 +369,7 @@ def search_planet_by_name(planet_name):
         else:
             st.warning(f"⚠️ Could not fetch data for {planet_name}")
             return None, None
-            
+
     except Exception as e:
         st.error(f"Error searching planet: {str(e)}")
         return None, None
@@ -511,7 +539,7 @@ SEQUENCE_LENGTH = 2000
 THRESHOLD = 0.5
 
 st.set_page_config(
-    page_title="EXO-SCAN AI | Exoplanet Detection System",
+    page_title="CelestiaNet | Exoplanet Detection System",
     page_icon="🪐",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -574,13 +602,15 @@ for path in possible_paths:
 def load_model():
     if MODEL_PATH is None:
         st.error("⚠️ Model file not found!")
-        st.info("""
+        st.info(
+            """
         **For Deployment:**
         1. Upload your `exoplanet_model.keras` file to your repository
         2. Place it in the same directory as this script
         3. Commit and push to GitHub
         4. Deploy on Streamlit Cloud
-        """)
+        """
+        )
         return None
     try:
         model = tf.keras.models.load_model(
@@ -1060,7 +1090,16 @@ def create_fourier_analysis_plot(frequencies, power, peak_indices):
 # ======================================================
 # ANALYSIS PROCESSING FUNCTION
 # ======================================================
-def process_analysis(df, file_name, threshold, transit_sigma, show_comprehensive, show_fourier, show_statistics, metadata=None):
+def process_analysis(
+    df,
+    file_name,
+    threshold,
+    transit_sigma,
+    show_comprehensive,
+    show_fourier,
+    show_statistics,
+    metadata=None,
+):
     """
     Process light curve analysis - used by both file upload and ID lookup
     """
@@ -1133,17 +1172,19 @@ def process_analysis(df, file_name, threshold, transit_sigma, show_comprehensive
                     st.write(f"**Target ID:** {metadata.get('target_id', 'N/A')}")
                     st.write(f"**Mission:** {metadata.get('mission', 'N/A')}")
                 with col2:
-                    if metadata.get('has_known_planet'):
+                    if metadata.get("has_known_planet"):
                         st.success("✅ Known exoplanet host")
-                        if metadata.get('period'):
+                        if metadata.get("period"):
                             st.write(f"**Known Period:** {metadata['period']:.2f} days")
                     else:
                         st.info("⚪ No confirmed planets")
                 with col3:
-                    if metadata.get('depth_ppm'):
+                    if metadata.get("depth_ppm"):
                         st.write(f"**Known Depth:** {metadata['depth_ppm']:.0f} ppm")
-                    if metadata.get('duration_hours'):
-                        st.write(f"**Known Duration:** {metadata['duration_hours']:.2f} hours")
+                    if metadata.get("duration_hours"):
+                        st.write(
+                            f"**Known Duration:** {metadata['duration_hours']:.2f} hours"
+                        )
 
         # Display results in columns
         col1, col2, col3, col4 = st.columns(4)
@@ -1321,12 +1362,13 @@ def process_analysis(df, file_name, threshold, transit_sigma, show_comprehensive
             "baseline_stability": baseline_stability,
             "outliers": num_outliers,
         }
-        
+
         return result
 
     except Exception as e:
         st.error(f"❌ Error processing: {str(e)}")
         import traceback
+
         st.code(traceback.format_exc())
         return None
 
@@ -1390,7 +1432,7 @@ st.markdown(
 # ======================================================
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/000000/planet.png", width=80)
-    st.title("🛸 EXO-SCAN AI")
+    st.title("🛸 CelestiaNet")
     st.caption("Advanced Exoplanet Detection System")
 
     st.divider()
@@ -1459,7 +1501,7 @@ with st.sidebar:
 col1, col2, col3 = st.columns([1, 2, 1])
 
 with col2:
-    st.title("🌌 EXO-SCAN AI")
+    st.title("🌌 CelestiaNet")
     st.markdown("### Hybrid CNN-BiLSTM Exoplanet Detection System")
     st.caption("NASA-grade Light Curve Analysis • Real-time Transit Detection")
 
@@ -1487,91 +1529,97 @@ tab1, tab2, tab3 = st.tabs(["🔭 ID Lookup", "📁 File Upload", "📖 Document
 # ======================================================
 with tab1:
     st.markdown("## 🆔 Search by Planet/Star ID")
-    
+
     st.info("🌟 Enter a Kepler (KIC), TESS (TIC) ID, or planet name to analyze!")
-    
+
     col1, col2 = st.columns([3, 1])
-    
+
     with col1:
         target_id = st.text_input(
             "Enter Target ID or Planet Name",
             placeholder="e.g., 10004738, KIC 11904151, Kepler-16b, TIC 268644785",
-            help="Supports: KIC IDs, TIC IDs, or planet names"
+            help="Supports: KIC IDs, TIC IDs, or planet names",
         )
-    
+
     with col2:
         st.write("")  # Spacing
         st.write("")  # Spacing
-        search_button = st.button("🔍 Search & Analyze", type="primary", use_container_width=True)
-    
+        search_button = st.button(
+            "🔍 Search & Analyze", type="primary", use_container_width=True
+        )
+
     if search_button and target_id:
         target_id = target_id.strip()
-        
+
         # Determine type of ID
-        if any(keyword in target_id.upper() for keyword in ['KEPLER', 'K2', 'KOI']):
+        if any(keyword in target_id.upper() for keyword in ["KEPLER", "K2", "KOI"]):
             st.info("🔭 Searching as planet name...")
             result = search_planet_by_name(target_id)
-        elif 'TIC' in target_id.upper() or (target_id.replace(' ', '').isdigit() and len(target_id) > 7):
+        elif "TIC" in target_id.upper() or (
+            target_id.replace(" ", "").isdigit() and len(target_id) > 7
+        ):
             st.info("🛰️ Searching TESS archive...")
             result = fetch_real_tess_lightcurve(target_id)
-        elif 'KIC' in target_id.upper() or target_id.replace(' ', '').isdigit():
+        elif "KIC" in target_id.upper() or target_id.replace(" ", "").isdigit():
             st.info("🔭 Searching Kepler archive...")
             result = fetch_real_kepler_lightcurve(target_id)
         else:
             st.info("🔭 Searching as planet name...")
             result = search_planet_by_name(target_id)
-        
+
         if result:
             df, metadata = result
-            
+
             if df is not None and len(df) > 0:
                 st.markdown(f"---")
                 st.markdown(f"### 🎯 Analysis: {metadata.get('target_id', target_id)}")
-                
+
                 # Display data preview
                 with st.expander("📄 Data Preview", expanded=False):
                     st.write(f"Shape: {df.shape}")
                     st.write(f"Columns: {', '.join(df.columns)}")
                     st.dataframe(df.head(10))
-                
+
                 # Process the analysis
                 process_analysis(
-                    df, 
+                    df,
                     f"{metadata.get('mission', 'Unknown')} {metadata.get('target_id', target_id)}",
                     threshold,
                     transit_sigma,
                     show_comprehensive,
                     show_fourier,
                     show_statistics,
-                    metadata
+                    metadata,
                 )
             else:
                 st.error("❌ No data available for this target")
         else:
             st.error("❌ Target not found or data unavailable")
-            st.info("💡 Try a different ID or check the format in the sidebar help section")
-    
+            st.info(
+                "💡 Try a different ID or check the format in the sidebar help section"
+            )
+
     elif not target_id and search_button:
         st.warning("⚠️ Please enter a target ID or planet name")
-    
+
     # Example IDs
     st.markdown("---")
     st.markdown("### 📌 Try These Example Targets")
-    
+
     ex_col1, ex_col2, ex_col3 = st.columns(3)
-    
+
     with ex_col1:
         st.markdown("**Known Exoplanet Hosts:**")
         st.code("10004738 (KIC)")
         st.code("11904151 (KIC)")
         st.code("10666592 (KIC)")
-    
+
     with ex_col2:
         st.markdown("**TESS Targets:**")
         st.code("268644785 (TIC)")
         st.code("460205581 (TIC)")
         st.code("307210830 (TIC)")
-    
+
     with ex_col3:
         st.markdown("**Planet Names:**")
         st.code("Kepler-16b")
@@ -1630,9 +1678,9 @@ with tab2:
                 transit_sigma,
                 show_comprehensive,
                 show_fourier,
-                show_statistics
+                show_statistics,
             )
-            
+
             if result:
                 st.session_state.results.append(result)
 
@@ -1716,9 +1764,10 @@ to detect exoplanetary transits in photometric time-series data.
 # TAB 3: Documentation
 with tab3:
     st.markdown("## 📖 Complete Guide")
-    
+
     st.markdown("### 🆔 Using ID Lookup")
-    st.markdown("""
+    st.markdown(
+        """
 The ID Lookup feature allows you to search for targets directly without uploading files:
 
 **Supported ID Types:**
@@ -1741,8 +1790,9 @@ The ID Lookup feature allows you to search for targets directly without uploadin
 4. Analysis runs automatically with full visualizations
 
 **Note:** The system generates realistic light curves based on known planetary parameters from NASA's Exoplanet Archive. For production use, you would integrate direct FITS file downloads from MAST.
-    """)
-    
+    """
+    )
+
     st.markdown("---")
 
     st.markdown("### 📁 File Upload Format")
@@ -1793,11 +1843,12 @@ If you encounter errors:
 4. Try removing all blank lines if still failing
     """
     )
-    
+
     st.markdown("---")
-    
+
     st.markdown("### ⚙️ Configuration Settings")
-    st.markdown("""
+    st.markdown(
+        """
 **Detection Threshold (0.1-0.9)**
 - Controls AI confidence required to declare exoplanet detection
 - Lower values = more sensitive, more false positives
@@ -1814,12 +1865,14 @@ If you encounter errors:
 - **Comprehensive Analysis**: 6-panel detailed view with all metrics
 - **Fourier Analysis**: Frequency domain power spectral density
 - **Detailed Statistics**: Complete statistical breakdown
-    """)
-    
+    """
+    )
+
     st.markdown("---")
-    
+
     st.markdown("### 🧠 Model Architecture")
-    st.markdown("""
+    st.markdown(
+        """
 **Hybrid CNN-BiLSTM with Attention Mechanism**
 
 1. **Input Layer**: 2000-point normalized light curve
@@ -1833,12 +1886,14 @@ If you encounter errors:
 - Trained on NASA Kepler mission data
 - Includes confirmed exoplanets and non-planetary variables
 - Robust to noise and stellar variability
-    """)
-    
+    """
+    )
+
     st.markdown("---")
-    
+
     st.markdown("### 📊 Understanding the Metrics")
-    st.markdown("""
+    st.markdown(
+        """
 **AI Confidence**: Model's certainty in detection (0-100%)
 
 **Signal-to-Noise Ratio (SNR)**: Data quality indicator
@@ -1860,12 +1915,14 @@ If you encounter errors:
 
 **Data Quality Score**: Overall stability assessment (0-100%)
 - Accounts for trends, outliers, and variability
-    """)
-    
+    """
+    )
+
     st.markdown("---")
-    
+
     st.markdown("### 🚀 Deployment Guide")
-    st.markdown("""
+    st.markdown(
+        """
 **For Streamlit Cloud:**
 
 1. **Prepare Repository**
@@ -1897,7 +1954,10 @@ If you encounter errors:
 pip install -r requirements.txt
 streamlit run exoplanet_detector_merged.py
 ```
-    """)
+    """
+    )
 
 st.markdown("---")
-st.caption("© 2026 EXO-SCAN AI | NASA-grade Exoplanet Detection | Powered by Deep Learning")
+st.caption(
+    "© 2026 EXO-SCAN AI | NASA-grade Exoplanet Detection | Powered by Deep Learning"
+)

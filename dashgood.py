@@ -180,7 +180,7 @@ SEQUENCE_LENGTH = 2000
 THRESHOLD = 0.5
 
 st.set_page_config(
-    page_title="EXO-SCAN AI | Exoplanet Detection System",
+    page_title="CelestiaNet | Exoplanet Detection System",
     page_icon="🪐",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -768,7 +768,7 @@ st.markdown(
 # ======================================================
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/000000/planet.png", width=80)
-    st.title("🛸 EXO-SCAN AI")
+    st.title("🛸 CelestiaNet")
     st.caption("Advanced Exoplanet Detection System")
 
     st.divider()
@@ -838,7 +838,7 @@ time	flux	flux_err
 col1, col2, col3 = st.columns([1, 2, 1])
 
 with col2:
-    st.title("🌌 EXO-SCAN AI")
+    st.title("🌌 CelestiaNet")
     st.markdown("### Hybrid CNN-BiLSTM Exoplanet Detection System")
     st.caption("NASA-grade Light Curve Analysis • Real-time Transit Detection")
 
